@@ -1,0 +1,6 @@
+.deploy_git/
+node_modules/
+public/
+dist
+*.local
+*.log
