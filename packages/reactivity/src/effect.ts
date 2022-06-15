@@ -17,10 +17,7 @@ class ReactiveEffect {
     run() {
         // 如果effect已经被关闭，只执行函数，不进行依赖收集
         if (!this.active) this.fn();
-        /**
-         * 依赖收集
-         * 核心是当前的effect和稍后渲染的属性关联起来
-         */
+        // 依赖收集,核心是当前的effect和稍后渲染的属性关联起来 
         try {
             this.parent = activeEffect; // 记录之前的activeEffect
             activeEffect = this;
@@ -129,4 +126,16 @@ export function track(target, type, key) {
         // 删除effect时，直接将其从set中删除
         activeEffect.deps.push(dep);
     }
+}
+export function trigger(target, type, key, val, oldVal) {
+    const depsMap = targetMap.get(target);
+    if (!depsMap) return; // 可能没有依赖到该属性的地方
+    const effects = depsMap.get(key);
+    effects && effects.forEach(effect => {
+        // 避免递归调用当前effecf,造成栈溢出
+        // 考虑这样场景：在effect中对响应式属性赋值，此时会触发trigger来更新依赖于该属性的effect
+        // 问题在于当前effect也是其中之一，因此会执行当前effect，于是又一次执行了赋值操作，递归开始
+        // 解决: 如果当前要执行的effect就是之前记录的activeEffect，不再执行
+        if (effect !== activeEffect) effect.run();
+    });
 }
