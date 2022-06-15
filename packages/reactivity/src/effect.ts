@@ -5,6 +5,18 @@
  * 当响应式对象的属性变化，即可执行它关联的这个fn/effect
  */
 export let activeEffect = undefined;
+/**
+ * 执行传入的fn之前要清空属性和effect之间的依赖关系
+ * @param effect 
+ */
+function cleanupEffect(effect) {
+    const { deps } = effect; // deps： { set1 set2 }  其中记录各属性的set
+    // 必须采用如下方式删除，而非单纯让deps=[]，因为这里需要删除双向的依赖
+    for (let i = 0; i < deps.length; i++) {
+        deps[i].delete(effect);
+    }
+    effect.deps.length = 0;
+}
 class ReactiveEffect {
     // 表示在实例上新增active属性
     public active = true; // 默认激活状态
@@ -21,6 +33,8 @@ class ReactiveEffect {
         try {
             this.parent = activeEffect; // 记录之前的activeEffect
             activeEffect = this;
+            // 执行传入的用户函数之前清空依赖
+            cleanupEffect(this);
             // 执行时,其依赖的响应式数据就能够保存当前的activeEffect
             return this.fn();
         } finally {
@@ -130,12 +144,27 @@ export function track(target, type, key) {
 export function trigger(target, type, key, val, oldVal) {
     const depsMap = targetMap.get(target);
     if (!depsMap) return; // 可能没有依赖到该属性的地方
-    const effects = depsMap.get(key);
-    effects && effects.forEach(effect => {
-        // 避免递归调用当前effecf,造成栈溢出
-        // 考虑这样场景：在effect中对响应式属性赋值，此时会触发trigger来更新依赖于该属性的effect
-        // 问题在于当前effect也是其中之一，因此会执行当前effect，于是又一次执行了赋值操作，递归开始
-        // 解决: 如果当前要执行的effect就是之前记录的activeEffect，不再执行
-        if (effect !== activeEffect) effect.run();
-    });
+    let effects = depsMap.get(key);
+    /**
+     * 考虑这种情况： effect中有一个三元运算符：const v = judge ? state.a : state.b
+     * 就是说，effect中的依赖是会变动的，当judge条件不成立，原本的state.a不再被该effect所依赖
+     * 因此，应当在执行用户传入的fn方法之前清楚属性和effect之间的依赖，通过执行fn重新收集
+     * 考虑这种情况：Set的一个问题
+     * const set = new Set();  
+     * set.forEach(()=> { set.delete(1); set.add(1);  })
+     * 执行完删、增，set中一直会有元素，因此会导致无限循环
+     * 在下面的这个effects.forEach循环中，调用了effect.run(),而run方法中先删除依赖，
+     * 再执行fn重新收集的操作与上面同理，也会导致无限循环
+     * 解决：执行前拷贝一份，而非关联引用
+     */
+    if (effects) {
+        effects = [...effects]; 
+        effects.forEach(effect => {
+           // 避免递归调用当前effecf,造成栈溢出
+           // 考虑这样场景：在effect中对响应式属性赋值，此时会触发trigger来更新依赖于该属性的effect
+           // 问题在于当前effect也是其中之一，因此会执行当前effect，于是又一次执行了赋值操作，递归开始
+           // 解决: 如果当前要执行的effect就是之前记录的activeEffect，不再执行
+           if (effect !== activeEffect) effect.run();
+       });
+    }
 }
